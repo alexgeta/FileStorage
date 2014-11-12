@@ -25,7 +25,7 @@ public class TestFileStorage {
 
     @Before
     public void setUp() throws IOException {
-        savedFileInputStream =  new FileInputStream("src\\test\\file.txt");
+        savedFileInputStream =  new FileInputStream("src\\test\\rootPath\\file.txt");
     }
 
     @Test
