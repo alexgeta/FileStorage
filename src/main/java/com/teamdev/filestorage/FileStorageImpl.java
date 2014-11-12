@@ -11,6 +11,7 @@ import java.util.concurrent.ConcurrentHashMap;
  * Implementation of abstract data storage that allows to store millions objects in one folder.
  * Storage represents folder hierarchy which is based on MD5 hash function.
  * This means that storage allow to operate with 16^32 different file keys.
+ * Please be aware that keys are case sensitive.
  * @author Alex Geta
  */
 public class FileStorageImpl implements FileStorage {
