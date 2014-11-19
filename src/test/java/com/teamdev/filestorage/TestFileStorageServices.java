@@ -37,7 +37,7 @@ public class TestFileStorageServices {
         final int expirationTime = 500;
         final boolean isSaved = fileStorage.saveFile(key, savedInputStream, expirationTime);
         assertTrue(isSaved && savedFile.exists());
-        Thread.sleep(expirationTime);
+        Thread.sleep(expirationTime+10);
         assertTrue(!savedFile.exists());
         savedInputStream.close();
     }
