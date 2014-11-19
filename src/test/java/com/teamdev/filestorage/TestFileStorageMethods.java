@@ -2,6 +2,7 @@ package com.teamdev.filestorage;
 
 import com.teamdev.filestorage.exception.OutOfSpaceException;
 import org.apache.commons.io.IOUtils;
+import org.junit.After;
 import org.junit.Before;
 import org.junit.Test;
 
@@ -96,5 +97,10 @@ public class TestFileStorageMethods {
         savedInputStream.close();
     }
 
-
+    @After
+    public void tearDown() throws Exception {
+        if(new File(rootPath).delete()){
+            assertTrue(true);
+        }
+    }
 }

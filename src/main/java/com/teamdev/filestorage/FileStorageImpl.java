@@ -77,6 +77,9 @@ public class FileStorageImpl implements FileStorage {
 
         BufferedOutputStream bufferedOutputStream = null;
         try {
+            if(inputStream.available() == 0){
+                throw new IllegalArgumentException("InputStream is empty");
+            }
             if(inputStream.available() > getFreeSpace()){
                 throw new OutOfSpaceException();
             }
