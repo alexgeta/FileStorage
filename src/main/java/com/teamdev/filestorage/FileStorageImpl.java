@@ -1,16 +1,19 @@
 package com.teamdev.filestorage;
 
+import com.teamdev.filestorage.exception.OutOfSpaceException;
 import org.apache.commons.codec.digest.DigestUtils;
 
 import java.io.*;
 import java.nio.file.FileAlreadyExistsException;
-import java.util.*;
+import java.util.Date;
+import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
 
 /**
  * Implementation of abstract data storage that allows to store millions objects in one folder.
  * Storage represents folder hierarchy which is based on MD5 hash function.
  * This means that storage allow to operate with 16^32 different file keys.
+ * Please be aware that keys are case sensitive.
  * @author Alex Geta
  */
 public class FileStorageImpl implements FileStorage {
@@ -18,7 +21,7 @@ public class FileStorageImpl implements FileStorage {
     /**
      * Path to root folder on local disk.
      */
-    private final String rootPath;
+    private final File rootFolder;
     /**
      * Allowed for usage space in bytes.
      */
@@ -26,11 +29,15 @@ public class FileStorageImpl implements FileStorage {
     /**
      * Currently used space in bytes.
      */
-    private long usedSpace = 0;
+    private volatile long usedSpace = 0;
     /**
      * Files awaiting for deleting.
      */
     private final Map<String,Date> expiringFiles = new ConcurrentHashMap<String, Date>();
+    /**
+     * Service that monitors expired files.
+     */
+    private FileExpirationMonitor expirationMonitor;
 
     /**
      * Creates a new FileStorage instance with the specified parameters.
@@ -39,14 +46,15 @@ public class FileStorageImpl implements FileStorage {
      * @throws IllegalArgumentException if passed arguments is invalid.
      */
     public FileStorageImpl(String rootPath, long bytes) {
-        if(new File(rootPath).exists()){
-            this.rootPath = rootPath;
+        File rootFolder = new File(rootPath);
+        if(rootFolder.exists() && rootFolder.isDirectory()){
+            this.rootFolder = rootFolder;
         }else throw new IllegalArgumentException("Invalid root path argument "+rootPath);
 
         if(bytes > 0){
             this.allocatedSpace = bytes;
-        }else throw new IllegalArgumentException("Invalid bytes argument "+bytes);
-        new FileExpirationMonitoring(this, expiringFiles, Thread.currentThread()).start();
+        }else throw new IllegalArgumentException("Bytes argument must be > 0");
+
     }
 
     /**
@@ -55,45 +63,67 @@ public class FileStorageImpl implements FileStorage {
      * @param inputStream InputStream with saving object.
      * @param millis Object expiration time in milliseconds.
      * @throws FileAlreadyExistsException if file with same associated key already exists in storage.
-     * @throws IllegalStateException if object size is bigger than available free space in storage.
-     * @return true if object successfully saved.
+     * @throws OutOfSpaceException if object size is bigger than available free space in storage.
+     * @return true if object successfully saved, false otherwise.
      */
     @Override
-    public synchronized boolean saveFile(String key, InputStream inputStream, long millis) throws IOException{
+    public boolean saveFile(String key, InputStream inputStream, long millis) throws FileAlreadyExistsException,
+             OutOfSpaceException{
 
         final File file = getFile(key);
         if(file.exists()){
             throw new FileAlreadyExistsException("File with key "+key+" already exists");
         }
 
-        final int fileSize = inputStream.available();
-        if((usedSpace + fileSize) > allocatedSpace){
-            throw new IllegalStateException("Out of allocated space");
+        BufferedOutputStream bufferedOutputStream = null;
+        try {
+            if(inputStream.available() > getFreeSpace()){
+                throw new OutOfSpaceException();
+            }
+            if(!createFile(file)) return false;
+
+            final byte[] buffer = new byte[1024*32];
+            final BufferedInputStream bufferedInputStream = new BufferedInputStream(inputStream);
+            bufferedOutputStream = new BufferedOutputStream(new FileOutputStream(file));
+            int readLength;
+            while ((readLength = bufferedInputStream.read(buffer)) > 0){
+                if(readLength > getFreeSpace()){
+                    throw new OutOfSpaceException();
+                }
+                bufferedOutputStream.write(buffer, 0, readLength);
+                usedSpace += readLength;
+            }
+            bufferedOutputStream.close();
+
+            if(millis > 0) addExpiringFile(key, millis);
+            return true;
+
+        }catch (OutOfSpaceException e){
+            if(file.exists() && !deleteUnfinishedFile(bufferedOutputStream, file)){
+                System.err.println("Unable to delete unsuccessfully saved file!");
+            }
+            throw new OutOfSpaceException();
         }
-
-        final File fileDirectory = file.getParentFile();
-        if(!fileDirectory.exists()) fileDirectory.mkdirs();
-        final boolean isCreated = file.createNewFile();
-
-        final byte[] buffer = new byte[1024 * 32];
-        final BufferedInputStream bufferedInputStream = new BufferedInputStream(inputStream);
-        final BufferedOutputStream fileOutputStream = new BufferedOutputStream(new FileOutputStream(file));
-        int readLength;
-        while ((readLength = bufferedInputStream.read(buffer)) > 0){
-            fileOutputStream.write(buffer, 0, readLength);
+        catch (IOException e) {
+            e.printStackTrace();
+            if(file.exists() && !deleteUnfinishedFile(bufferedOutputStream, file)){
+                throw new IllegalStateException("Unable to delete unsuccessfully saved file!");
+            }
+            return false;
         }
-        usedSpace += fileSize;
-        fileOutputStream.close();
-
-        if(millis > 0) addExpiringFile(key, millis);
-        return isCreated;
     }
 
-    public boolean saveFile(String key, InputStream inputStream) throws IOException{
+    @Override
+    public boolean saveFile(String key, InputStream inputStream) throws FileAlreadyExistsException,
+            OutOfSpaceException{
         return saveFile(key, inputStream, 0);
     }
 
-    public synchronized long getFreeSpace(){
+    /**
+     * @return byte representation of free space in this storage.
+     */
+    @Override
+    public long getFreeSpace(){
         return allocatedSpace - usedSpace;
     }
 
@@ -104,7 +134,7 @@ public class FileStorageImpl implements FileStorage {
      * @throws FileNotFoundException if object with specified key is not exists in storage.
      */
     @Override
-    public synchronized InputStream readFile(String key) throws IOException{
+    public InputStream readFile(String key) throws FileNotFoundException{
         final File file = getFile(key);
         if(!file.exists()){
             throw new FileNotFoundException("File with key "+key+" doesn't exists");
@@ -115,49 +145,101 @@ public class FileStorageImpl implements FileStorage {
     /**
      * Delete object with associated key from the storage.
      * @param key Key string associated with deleted object.
-     * @return true if the object successfully deleted.
+     * @return true if the object successfully deleted, false otherwise.
      * @throws FileNotFoundException if object with specified key is not exists in storage.
      */
     @Override
-    public synchronized boolean deleteFile(String key) throws IOException{
-
+    public boolean deleteFile(String key) throws FileNotFoundException {
         final File deletedFile = getFile(key);
         if(!deletedFile.exists()){
             throw new FileNotFoundException("File with key "+key+" doesn't exists");
         }
+        return deleteFile(deletedFile);
+    }
 
-        final long fileSize = deletedFile.length();
-        boolean isDeleted = deletedFile.delete();
-
+    /**
+     * Delete file from storage by File class object representation.
+     * Used only in cleaner service.
+     * @param file File class object representing deleted file in storage.
+     * @return true if the object successfully deleted, false otherwise.
+     * @throws FileNotFoundException if object with specified key is not exists in storage.
+     */
+    protected boolean deleteFile(File file) throws FileNotFoundException {
+        final long fileSize = file.length();
+        boolean isDeleted = file.delete();
         if(isDeleted){
             usedSpace -= fileSize;
-            deleteEmptyDirectories(deletedFile);
+            deleteEmptyDirectories(file);
         }
         return isDeleted;
     }
 
+    /**
+     * Cleans storage by specified percent of total allocated space.
+     * @param percent desired percent to clean.
+     */
+    @Override
+    public void clean(int percent) {
+        if(percent > 100 || percent < 1){
+            throw new IllegalArgumentException("percent must be in range from 1 to 100");
+        }
+        final long cleaningSpace = allocatedSpace / 100 * percent;
+        final Thread cleaner = new CleanerService(rootFolder, this, cleaningSpace);
+        cleaner.start();
+    }
+
+    private boolean createFile(File file){
+        boolean isCreated = false;
+        final File fileFolder = file.getParentFile();
+        if(!fileFolder.exists()) isCreated = fileFolder.mkdirs();
+        try {
+            if(isCreated) isCreated = file.createNewFile();
+        } catch (IOException e) {
+            e.printStackTrace();
+        }
+        return isCreated;
+    }
+
     private void deleteEmptyDirectories(File deletedFile){
         File parent = deletedFile.getParentFile();
-        while (!parent.getPath().equals(rootPath) && parent.list().length == 0){
-            parent.delete();
-            parent = parent.getParentFile();
+        while (!parent.equals(rootFolder) && parent.list().length == 0){
+            if(parent.delete()){
+                parent = parent.getParentFile();
+            }else return;
         }
     }
 
+    private boolean deleteUnfinishedFile(OutputStream outputStream, File file){
+        boolean isDeleted = false;
+        try {
+            outputStream.close();
+            long fileSize = file.length();
+            isDeleted = file.delete();
+            if(isDeleted){
+                usedSpace -= fileSize;
+                deleteEmptyDirectories(file);
+            }
+        } catch (IOException e) {
+            e.printStackTrace();
+        }
+        return isDeleted;
+    }
+
     private File getFile(String key){
-        if(key.length() < 1) throw new IllegalArgumentException("Invalid key");
+        if(key.isEmpty()) throw new IllegalArgumentException("Invalid key");
         final String filePathName = generateFilePathName(key);
         return new File(filePathName);
     }
 
     private String generateFilePathName(String key){
-        final int FOLDER_TREE_HEIGHT = 2;
-        final int CHUNK_SIZE = 4;
+        final int FOLDER_TREE_HEIGHT = 3;
+        final int CHUNK_SIZE = 3;
+        final String REG_EX = "(?<=\\G.{"+CHUNK_SIZE+"})";
         final String FILE_EXT = ".dat";
 
-        final StringBuilder filePathName = new StringBuilder(rootPath).append(File.separator);
+        final StringBuilder filePathName = new StringBuilder(rootFolder.toString()).append(File.separator);
         final String keyHash = DigestUtils.md5Hex(key);
-        final String[] hashChunks = splitByNumberOfChars(keyHash, CHUNK_SIZE);
+        final String[] hashChunks = keyHash.split(REG_EX);
 
         for(int i = 0; i < FOLDER_TREE_HEIGHT; i++){
             filePathName.append(hashChunks[i]);
@@ -170,15 +252,14 @@ public class FileStorageImpl implements FileStorage {
         return filePathName.toString();
     }
 
-    private String [] splitByNumberOfChars(String hash, int chunkSize){
-        final String REG_EX = "(?<=\\G.{"+chunkSize+"})";
-        return hash.split(REG_EX);
-    }
-
     private void addExpiringFile(String key, long expire){
         long currentTime = System.currentTimeMillis();
         Date expirationTime = new Date(currentTime + expire);
         expiringFiles.put(key, expirationTime);
+        if(expirationMonitor == null ||
+                          expirationMonitor.getState() == Thread.State.TERMINATED){
+            expirationMonitor = new FileExpirationMonitor(this, expiringFiles);
+            expirationMonitor.start();
+        }
     }
-
 }

@@ -8,16 +8,14 @@ import java.util.Map;
  * Monitoring service is responsible for deleting expired files.
  * @author Alex Geta
  */
-public class FileExpirationMonitoring extends Thread{
+public class FileExpirationMonitor extends Thread{
 
     private final FileStorage fileStorage;
     private final Map <String, Date> expiringFiles;
-    private final Thread parentThread;
 
-    public FileExpirationMonitoring(FileStorage fileStorage, Map <String, Date> expiringFiles, Thread thread) {
+    public FileExpirationMonitor(FileStorage fileStorage, Map<String, Date> expiringFiles) {
         this.fileStorage = fileStorage;
         this.expiringFiles = expiringFiles;
-        this.parentThread = thread;
     }
 
     private void checkExpiredFiles(){
@@ -38,7 +36,7 @@ public class FileExpirationMonitoring extends Thread{
 
     @Override
     public void run() {
-        while (parentThread.isAlive()){
+        while (!expiringFiles.isEmpty()){
             checkExpiredFiles();
         }
     }
