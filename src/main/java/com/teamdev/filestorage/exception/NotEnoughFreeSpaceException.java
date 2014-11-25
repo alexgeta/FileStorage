@@ -5,6 +5,6 @@ import java.io.IOException;
 /**
  * @author Alex Geta
  */
-public class OutOfSpaceException extends IOException {
+public class NotEnoughFreeSpaceException extends IOException {
 
 }

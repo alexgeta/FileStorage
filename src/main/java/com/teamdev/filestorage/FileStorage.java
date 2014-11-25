@@ -1,6 +1,6 @@
 package com.teamdev.filestorage;
 
-import com.teamdev.filestorage.exception.OutOfSpaceException;
+import com.teamdev.filestorage.exception.NotEnoughFreeSpaceException;
 
 import java.io.FileNotFoundException;
 import java.io.InputStream;
@@ -11,11 +11,17 @@ import java.nio.file.FileAlreadyExistsException;
  */
 public interface FileStorage {
 
+    boolean saveFile(String key, InputStream inputStream, long expirationTime, CallBack callBack) throws FileAlreadyExistsException,
+            NotEnoughFreeSpaceException;
+
     boolean saveFile(String key, InputStream inputStream, long expirationTime) throws FileAlreadyExistsException,
-            OutOfSpaceException;
+            NotEnoughFreeSpaceException;
+
+    boolean saveFile(String key, InputStream inputStream, CallBack callBack) throws FileAlreadyExistsException,
+            NotEnoughFreeSpaceException;
 
     boolean saveFile(String key, InputStream inputStream) throws FileAlreadyExistsException,
-            OutOfSpaceException;
+            NotEnoughFreeSpaceException;
 
     InputStream readFile(String key) throws FileNotFoundException;
 
@@ -23,7 +29,7 @@ public interface FileStorage {
 
     long getFreeSpace();
 
-    void clean(int percent);
+    long clean(long bytes);
 
 }
 

@@ -1,6 +1,6 @@
 package com.teamdev.filestorage;
 
-import com.teamdev.filestorage.exception.OutOfSpaceException;
+import com.teamdev.filestorage.exception.NotEnoughFreeSpaceException;
 import org.apache.commons.io.IOUtils;
 import org.junit.After;
 import org.junit.Before;
@@ -87,7 +87,7 @@ public class TestFileStorageMethods {
         fileStorage.readFile(key);
     }
 
-    @Test(expected = OutOfSpaceException.class)
+    @Test(expected = NotEnoughFreeSpaceException.class)
     public void testOutOfSpace() throws IOException {
         fileStorage = new FileStorageImpl(rootPath, 1024*10);
         final String key = "someKey";

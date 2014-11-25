@@ -47,17 +47,19 @@ public class TestFileStorageServices {
         final long capacity = 1024*1024*10;
         fileStorage = new FileStorageImpl(rootPath, capacity);
         final String key = "fileKey";
-        final int percentToClean = 30;
+        final long bytesToClean = 1234567;
         final byte [] savedBytes = new byte[1024*100];
         for(int i = 0; i < 100; i++){
             String currentKey = key + String.valueOf(i);
             fileStorage.saveFile(currentKey, new ByteArrayInputStream(savedBytes));
         }
-        fileStorage.clean(percentToClean);
-        Thread.sleep(1000);
-        final long nearlyExpectedFreeSpace = capacity/100*percentToClean;
+        final long freeSpaceBeforeClean = fileStorage.getFreeSpace();
+        final long cleanedBytes = fileStorage.clean(bytesToClean);
+
+        final long nearlyExpectedFreeSpace = freeSpaceBeforeClean - bytesToClean;
         assertTrue(fileStorage.getFreeSpace() >= nearlyExpectedFreeSpace);
-        fileStorage.clean(100);
+        assertTrue(cleanedBytes >= bytesToClean);
+        fileStorage.clean(capacity - fileStorage.getFreeSpace());
     }
 
     @After
